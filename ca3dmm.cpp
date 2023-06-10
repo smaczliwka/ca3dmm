@@ -438,7 +438,7 @@ int main(int argc, char *argv[]) {
                             col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
                             0,
                             row_comm
-                        );           
+                        );
                         MPI_Recv(
                             &A[0],
                             ceil_m * ceil_k,
@@ -473,74 +473,106 @@ int main(int argc, char *argv[]) {
                 int next_row = 0;
                 int print = 0;
 
-                while (next_row < part_m) {
-                    if (col == 0 && row == 0 && next_row == 0) {
-                        //std::cout << "zaczynam\n";
+                if (col == 0) {
+                    if (row == 0) {
+                       std::cout << "zaczynam\n";
+                       std::cout.flush();
                     }
                     else {
                         MPI_Recv(
                             &print,
                             1,
                             MPI_INTEGER,
-                            MPI_ANY_SOURCE,
+                            row - 1,
                             MPI_ANY_TAG, /* if not MPI_ANY_TAG, receive only with a certain tag */
-                            active, /* communicator to use */
+                            col_comm, /* communicator to use */
                             MPI_STATUS_IGNORE /* if not MPI_STATUS_IGNORE, write comm info here */
                         );
-                        //std::cout << "dostaje\n";
                     }
-                    if (Pn == 1) {
+
+                    for (int i = 0; i < part_n; i++) {
+                        std::cout << R[next_row * ceil_n + i] << " ";
+                    }
+                    next_row++;
+                    if (col == Pn - 1) std::cout << "\n";
+
+                    if (col + 1 < Pn) {
+                        std::cout.flush();
+                        MPI_Send(
+                            &print,
+                            1,
+                            MPI_INTEGER,
+                            col + 1,
+                            0,
+                            row_comm
+                        );
+                    }
+                    else {
+                        // std::cout << "dupa\n";
                         while (next_row < part_m) {
                             for (int i = 0; i < part_n; i++) {
                                 std::cout << R[next_row * ceil_n + i] << " ";
                             }
                             next_row++;
-                            std::cout << "\n";
+                            if (col == Pn - 1) std::cout << "\n";
                         }
-                        if (rank + Pn < Pn * Pm) {
-                            MPI_Send(
-                                &print,
-                                1,
-                                MPI_INTEGER,
-                                rank + Pn,
-                                0,
-                                active
-                            );
-                        }
-                    }
-                    else {
-                        for (int i = 0; i < part_n; i++) {
-                            std::cout << R[next_row * ceil_n + i] << " ";
-                        }
-                        next_row++;
-
-                        if (col == Pn - 1) std::cout << "\n";
-
-                        int dest;
-                        if (rank + 1 < (rank / Pn + 1) * Pn || next_row == part_m) {
-                            dest = rank + 1;
-                        }
-                        else {
-                            dest = (rank / Pn) * Pn;
-                        }
-
-                        //std::cout << "wysylam\n";
-                        if (dest < Pn * Pm) {
-                            MPI_Send(
-                                &print,
-                                1,
-                                MPI_INTEGER,
-                                dest,
-                                0,
-                                active
-                            );
-                        }
-
-                        //std::cout << "wyslane\n";
                     }
                 }
 
+                while (next_row < part_m) {
+                    MPI_Recv(
+                        &print,
+                        1,
+                        MPI_INTEGER,
+                        col - 1 < 0 ? col - 1 + Pn : col - 1,
+                        MPI_ANY_TAG, /* if not MPI_ANY_TAG, receive only with a certain tag */
+                        row_comm, /* communicator to use */
+                        MPI_STATUS_IGNORE
+                    );
+
+                    for (int i = 0; i < part_n; i++) {
+                        std::cout << R[next_row * ceil_n + i] << " ";
+                    }
+                    next_row++;
+                    if (col == Pn - 1) std::cout << "\n";
+
+                    std::cout.flush();
+                    MPI_Send(
+                        &print,
+                        1,
+                        MPI_INTEGER,
+                        (col + 1) % Pn,
+                        0,
+                        row_comm
+                    );
+                }
+
+                if (col == 0) {
+                    if (Pn > 1) {
+                        MPI_Recv(
+                            &print,
+                            1,
+                            MPI_INTEGER,
+                            col - 1 < 0 ? col - 1 + Pn : col - 1,
+                            MPI_ANY_TAG, /* if not MPI_ANY_TAG, receive only with a certain tag */
+                            row_comm, /* communicator to use */
+                            MPI_STATUS_IGNORE
+                        );
+                    }
+                    if (row + 1 < Pm) {
+                        std::cout.flush();
+                        MPI_Send(
+                            &print,
+                            1,
+                            MPI_INTEGER,
+                            row + 1,
+                            0,
+                            col_comm
+                        );
+                    }
+                }
             }
+
         }
 
     }
