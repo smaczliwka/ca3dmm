@@ -179,26 +179,82 @@ int main(int argc, char *argv[]) {
 
         int row_in_group = row % s;
         int col_in_group = col % s;
-        int group = (row * Pn + col) / (s * s);
+        int group = Pn < Pm ? row / s : col / s;
 
         MPI_Comm equi_comm; // Odpowiadające sobie procesy w różnych grupach
         MPI_Comm_split(slice_comm, row_in_group * s + col_in_group, group, &equi_comm);
 
-        if (Pn <= Pm) { // col == col_in_group
+        int ceil_n = (n + Pn - 1) / Pn;
+        int ceil_k = (dim_k + s - 1) / s;
+        int ceil_m = (m + Pm - 1) / Pm;
+
+        int part_n = col < n % Pn ? (n + Pn - 1) / Pn : n / Pn;
+        int part_m = row < m % Pm ? (m + Pm - 1) / Pm : m / Pm;
+
+        std::vector<double> A(ceil_m * ceil_k, 0);
+        std::vector<double> B(ceil_n * ceil_k, 0);
+
+        if (Pn >= Pm) { // row == row_in_group
+            // Pierwsza grupa generuje całą macierz Ai i rozsyła swoim odpowiednikom
+            // int ceil_m = (m + s - 1) / s;
+            // int ceil_k = (dim_k + s - 1) / s;
+
+            // std::vector<double> A(ceil_m * ceil_k, 0);
+
+            // int part_m = row < m % Pm ? (m + Pm - 1) / Pm : m / Pm;
+            if (group == 0) {
+                int part_k = col_in_group < dim_k % s ? (dim_k + s - 1) / s : dim_k / s;
+
+                int offset_m = row_in_group * (m / Pm) + std::min(row_in_group, m % Pm);
+                int offset_k = slice * (k / Pk) + std::min(slice, k % Pk) + col_in_group * (dim_k / s) + std::min(col_in_group, dim_k % s);
+
+                for (int i = 0; i < part_m; i++) {
+                    for (int j = 0; j < part_k; j++) {
+                        A[i * ceil_k + j] = generate_double(sA, i + offset_m, j + offset_k);
+                    }
+                }
+
+            }
+            MPI_Bcast(
+                &A[0],  /* the message will be written here */
+                        /* if my_rank==root, the message will be read from here */
+                ceil_m * ceil_k,  /* number of items in the message */
+                MPI_DOUBLE, /* type of data in the message */
+                0,   /* if my_rank==root, I'm sending, otherwise I'm receiving */
+                equi_comm  /* communicator to use */
+            );
+
+            // Każdy proces generuje swój kawałeczek macierzy Bi
+            //int ceil_n = (n + Pn - 1) / Pn;
+            // std::vector<double> B(ceil_n * ceil_k, 0);
+
+            // int part_n = col < n % Pn ? (n + Pn - 1) / Pn : n / Pn;
+            int part_k = row < dim_k % Pm ? (dim_k + Pm - 1) / Pm : dim_k / Pm;
+
+            int offset_n = col * (n / Pn) + std::min(col, n % Pn);
+            int offset_k = slice * (k / Pk) + std::min(slice, k % Pk) + row * (dim_k / s) + std::min(row, dim_k % s);
+
+            for (int i = 0; i < part_n; i++) {
+                for (int j = 0; j < part_k; j++) {
+                    B[i * ceil_k + j] = generate_double(sB, j + offset_k, i + offset_n);
+                }
+            }
+        }
+
+        else { // col == col_in_group
             // Pierwsza grupa generuje całą macierz Bi i rozsyła swoim odpowiednikom
-            int ceil_n = (n + s - 1) / s;
-            int ceil_k = (dim_k + s - 1) / s;
+            //int ceil_n = (n + s - 1) / s;
+            // int ceil_k = (dim_k + s - 1) / s;
 
-            std::vector<double> B(ceil_n * ceil_k, 0);
+            // std::vector<double> B(ceil_n * ceil_k, 0);
 
-            int part_n = col < n % Pn ? (n + Pn - 1) / Pn : n / Pn;
+            // int part_n = col < n % Pn ? (n + Pn - 1) / Pn : n / Pn;
             if (group == 0) {
                 // int part_n = col_in_group < n % s ? (n + s - 1) / s : n / s;
                 int part_k = row_in_group < dim_k % s ? (dim_k + s - 1) / s : dim_k / s;
 
                 int offset_n = col_in_group * (n / Pn) + std::min(col_in_group, n % Pn);
                 int offset_k = slice * (k / Pk) + std::min(slice, k % Pk) + row_in_group * (dim_k / s) + std::min(row_in_group, dim_k % s);
-
 
                 for (int i = 0; i < part_n; i++) {
                     for (int j = 0; j < part_k; j++) {
@@ -219,10 +275,10 @@ int main(int argc, char *argv[]) {
 
             // Każdy proces generuje swój kawałeczek macierzy Ai
 
-            int ceil_m = (m + Pm - 1) / Pm;
-            std::vector<double> A(ceil_m * ceil_k, 0);
+            // int ceil_m = (m + Pm - 1) / Pm;
+            // std::vector<double> A(ceil_m * ceil_k, 0);
 
-            int part_m = row < m % Pm ? (m + Pm - 1) / Pm : m / Pm;
+            // int part_m = row < m % Pm ? (m + Pm - 1) / Pm : m / Pm;
             int part_k = col < dim_k % Pn ? (dim_k + Pn - 1) / Pn : dim_k / Pn;
 
             int offset_m = row * (m / Pm) + std::min(row, m % Pm);
@@ -233,33 +289,150 @@ int main(int argc, char *argv[]) {
                     A[i * ceil_k + j] = generate_double(sA, i + offset_m, j + offset_k);
                 }
             }
+        }
 
-            // Robimy shift
+        // Robimy shift
 
-            MPI_Comm group_comm;
-            MPI_Comm_split(slice_comm, group, row_in_group * s + col_in_group, &group_comm);
+        MPI_Comm group_comm;
+        MPI_Comm_split(slice_comm, group, row_in_group * s + col_in_group, &group_comm);
 
-            MPI_Comm col_comm;
-            MPI_Comm_split(group_comm, col_in_group, row_in_group, &col_comm);
+        MPI_Comm col_comm;
+        MPI_Comm_split(group_comm, col_in_group, row_in_group, &col_comm);
 
-            MPI_Comm row_comm;
-            MPI_Comm_split(group_comm, row_in_group, col_in_group, &row_comm);
+        MPI_Comm row_comm;
+        MPI_Comm_split(group_comm, row_in_group, col_in_group, &row_comm);
 
-            // if (group == 0 && slice == 0) {
-            //     std::cout << rank << " (" << row_in_group << ", " << col_in_group << ")\n";
+        // if (group == 0 && slice == 0) {
+        //     std::cout << rank << " (" << row_in_group << ", " << col_in_group << ")\n";
+        // }
+
+        std::vector<double> bufB(ceil_n * ceil_k, 0);
+        std::vector<double> bufA(ceil_m * ceil_k, 0);
+
+        // Przesuwamy kolumny B
+        if (col_in_group > 0) {
+            if (row_in_group == 0) {
+                MPI_Recv(
+                    &bufB[0],
+                    ceil_n * ceil_k,
+                    MPI_DOUBLE,
+                    (row_in_group + col_in_group) % s,
+                    MPI_ANY_TAG,
+                    col_comm,
+                    MPI_STATUS_IGNORE
+                );
+                MPI_Send(
+                    &B[0],
+                    ceil_n * ceil_k,
+                    MPI_DOUBLE,
+                    row_in_group - col_in_group < 0 ? row_in_group - col_in_group + s : row_in_group - col_in_group,
+                    0,
+                    col_comm
+                );
+                swap(bufB, B);
+            }
+            else {
+                MPI_Send(
+                    &B[0],
+                    ceil_n * ceil_k,
+                    MPI_DOUBLE,
+                    row_in_group - col_in_group < 0 ? row_in_group - col_in_group + s : row_in_group - col_in_group,
+                    0,
+                    col_comm
+                );
+                MPI_Recv(
+                    &B[0],
+                    ceil_n * ceil_k,
+                    MPI_DOUBLE,
+                    (row_in_group + col_in_group) % s,
+                    MPI_ANY_TAG,
+                    col_comm,
+                    MPI_STATUS_IGNORE
+                );
+            }
+        }
+
+        // Przesuwamy wiersze A
+        if (row_in_group > 0) {
+            if (col_in_group == 0) {
+                MPI_Recv(
+                    &bufA[0],
+                    ceil_m * ceil_k,
+                    MPI_DOUBLE,
+                    (col_in_group + row_in_group) % s,
+                    MPI_ANY_TAG,
+                    row_comm,
+                    MPI_STATUS_IGNORE
+                );
+                MPI_Send(
+                    &A[0],
+                    ceil_m * ceil_k,
+                    MPI_DOUBLE,
+                    col_in_group - row_in_group < 0 ? col_in_group - row_in_group + s : col_in_group - row_in_group,
+                    0,
+                    row_comm
+                );
+                swap(bufA, A);
+            }
+            else {
+                MPI_Send(
+                    &A[0],
+                    ceil_m * ceil_k,
+                    MPI_DOUBLE,
+                    col_in_group - row_in_group < 0 ? col_in_group - row_in_group + s : col_in_group - row_in_group,
+                    0,
+                    row_comm
+                );
+                MPI_Recv(
+                    &A[0],
+                    ceil_m * ceil_k,
+                    MPI_DOUBLE,
+                    (col_in_group + row_in_group) % s,
+                    MPI_ANY_TAG,
+                    row_comm,
+                    MPI_STATUS_IGNORE
+                );
+            }
+        }
+
+        std::vector<double> C(ceil_n * ceil_m, 0);
+
+        for (int step = 0; step < s; step++) {
+
+            // if (rank == 3) {
+            //     std::cout<<"step "<<step<<" out of "<<s<<"\n";
+            //     std::cout << "multiplying\n";
+            //     for (int i = 0; i < ceil_m; i++) {
+            //         for (int j = 0; j < ceil_k; j++) {
+            //             std::cout <<A[i * ceil_k + j] << " ";
+            //         }
+            //         std::cout << "\n";
+            //     }
+            //     std::cout << "with\n";
+            //     for (int i = 0; i < ceil_k; i++) {
+            //         for (int j = 0; j < ceil_n; j++) {
+            //             std::cout <<B[i * ceil_n + j] << " ";
+            //         }
+            //         std::cout << "\n";
+            //     }
             // }
 
-            std::vector<double> bufB(ceil_n * ceil_k, 0);
-            std::vector<double> bufA(ceil_m * ceil_k, 0);
+            for (int i = 0; i < ceil_m; i++) {
+                for (int j = 0; j < ceil_n; j++) {
+                    for (int x = 0; x < ceil_k; x++) {
+                        C[i * ceil_n + j] += A[i * ceil_k + x] * B[j * ceil_k + x];
+                    }
+                }
+            }
 
-            // Przesuwamy kolumny B
-            if (col_in_group > 0) {
+            if (step + 1 < s) {
+                // Przesuwamy kolumny B
                 if (row_in_group == 0) {
                     MPI_Recv(
                         &bufB[0],
                         ceil_n * ceil_k,
                         MPI_DOUBLE,
-                        (row_in_group + col_in_group) % s,
+                        (row_in_group + 1) % s,
                         MPI_ANY_TAG,
                         col_comm,
                         MPI_STATUS_IGNORE
@@ -268,7 +441,7 @@ int main(int argc, char *argv[]) {
                         &B[0],
                         ceil_n * ceil_k,
                         MPI_DOUBLE,
-                        row_in_group - col_in_group < 0 ? row_in_group - col_in_group + s : row_in_group - col_in_group,
+                        row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
                         0,
                         col_comm
                     );
@@ -279,7 +452,7 @@ int main(int argc, char *argv[]) {
                         &B[0],
                         ceil_n * ceil_k,
                         MPI_DOUBLE,
-                        row_in_group - col_in_group < 0 ? row_in_group - col_in_group + s : row_in_group - col_in_group,
+                        row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
                         0,
                         col_comm
                     );
@@ -287,22 +460,19 @@ int main(int argc, char *argv[]) {
                         &B[0],
                         ceil_n * ceil_k,
                         MPI_DOUBLE,
-                        (row_in_group + col_in_group) % s,
+                        (row_in_group + 1) % s,
                         MPI_ANY_TAG,
                         col_comm,
                         MPI_STATUS_IGNORE
                     );
                 }
-            }
-
-            // Przesuwamy wiersze A
-            if (row_in_group > 0) {
+                // Przesuwamy wiersze A
                 if (col_in_group == 0) {
                     MPI_Recv(
                         &bufA[0],
                         ceil_m * ceil_k,
                         MPI_DOUBLE,
-                        (col_in_group + row_in_group) % s,
+                        (col_in_group + 1) % s,
                         MPI_ANY_TAG,
                         row_comm,
                         MPI_STATUS_IGNORE
@@ -311,7 +481,7 @@ int main(int argc, char *argv[]) {
                         &A[0],
                         ceil_m * ceil_k,
                         MPI_DOUBLE,
-                        col_in_group - row_in_group < 0 ? col_in_group - row_in_group + s : col_in_group - row_in_group,
+                        col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
                         0,
                         row_comm
                     );
@@ -322,7 +492,7 @@ int main(int argc, char *argv[]) {
                         &A[0],
                         ceil_m * ceil_k,
                         MPI_DOUBLE,
-                        col_in_group - row_in_group < 0 ? col_in_group - row_in_group + s : col_in_group - row_in_group,
+                        col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
                         0,
                         row_comm
                     );
@@ -330,249 +500,73 @@ int main(int argc, char *argv[]) {
                         &A[0],
                         ceil_m * ceil_k,
                         MPI_DOUBLE,
-                        (col_in_group + row_in_group) % s,
+                        (col_in_group + 1) % s,
                         MPI_ANY_TAG,
                         row_comm,
                         MPI_STATUS_IGNORE
                     );
                 }
             }
+        }
 
-            std::vector<double> C(ceil_n * ceil_m, 0);
+        MPI_Comm row_col_comm; // ten sam row i col
+        MPI_Comm_split(active, row * Pn + col, slice, &row_col_comm);
 
-            for (int step = 0; step < s; step++) {
+        std::vector<double> R(ceil_m * ceil_n, 0);
 
-                // if (rank == 3) {
-                //     std::cout<<"step "<<step<<" out of "<<s<<"\n";
-                //     std::cout << "multiplying\n";
-                //     for (int i = 0; i < ceil_m; i++) {
-                //         for (int j = 0; j < ceil_k; j++) {
-                //             std::cout <<A[i * ceil_k + j] << " ";
-                //         }
-                //         std::cout << "\n";
-                //     }
-                //     std::cout << "with\n";
-                //     for (int i = 0; i < ceil_k; i++) {
-                //         for (int j = 0; j < ceil_n; j++) {
-                //             std::cout <<B[i * ceil_n + j] << " ";
-                //         }
-                //         std::cout << "\n";
-                //     }
-                // }
+        MPI_Reduce(&C[0], &R[0], ceil_n * ceil_m, MPI_DOUBLE, MPI_SUM, 0,
+                row_col_comm);
 
-                for (int i = 0; i < ceil_m; i++) {
-                    for (int j = 0; j < ceil_n; j++) {
-                        for (int x = 0; x < ceil_k; x++) {
-                            C[i * ceil_n + j] += A[i * ceil_k + x] * B[j * ceil_k + x];
-                        }
-                    }
-                }
+        // if (slice == 0 && row == 0 && col == 0) {
+        //     for (int i = 0; i < ceil_m; i++) {
+        //         for (int j = 0; j < ceil_n; j++) {
+        //             std::cout << R[i * ceil_n + j] << " ";
+        //         }
+        //         std::cout << "\n";
+        //     }
+        // }
 
-                if (step + 1 < s) {
-                    // Przesuwamy kolumny B
-                    if (row_in_group == 0) {
-                        MPI_Recv(
-                            &bufB[0],
-                            ceil_n * ceil_k,
-                            MPI_DOUBLE,
-                            (row_in_group + 1) % s,
-                            MPI_ANY_TAG,
-                            col_comm,
-                            MPI_STATUS_IGNORE
-                        );
-                        MPI_Send(
-                            &B[0],
-                            ceil_n * ceil_k,
-                            MPI_DOUBLE,
-                            row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
-                            0,
-                            col_comm
-                        );
-                        swap(bufB, B);
-                    }
-                    else {
-                        MPI_Send(
-                            &B[0],
-                            ceil_n * ceil_k,
-                            MPI_DOUBLE,
-                            row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
-                            0,
-                            col_comm
-                        );  
-                        MPI_Recv(
-                            &B[0],
-                            ceil_n * ceil_k,
-                            MPI_DOUBLE,
-                            (row_in_group + 1) % s,
-                            MPI_ANY_TAG,
-                            col_comm,
-                            MPI_STATUS_IGNORE
-                        );
-                    }
-                    // Przesuwamy wiersze A
-                    if (col_in_group == 0) {
-                        MPI_Recv(
-                            &bufA[0],
-                            ceil_m * ceil_k,
-                            MPI_DOUBLE,
-                            (col_in_group + 1) % s,
-                            MPI_ANY_TAG,
-                            row_comm,
-                            MPI_STATUS_IGNORE
-                        );
-                        MPI_Send(
-                            &A[0],
-                            ceil_m * ceil_k,
-                            MPI_DOUBLE,
-                            col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
-                            0,
-                            row_comm
-                        );
-                        swap(bufA, A);
-                    }
-                    else {
-                        MPI_Send(
-                            &A[0],
-                            ceil_m * ceil_k,
-                            MPI_DOUBLE,
-                            col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
-                            0,
-                            row_comm
-                        );
-                        MPI_Recv(
-                            &A[0],
-                            ceil_m * ceil_k,
-                            MPI_DOUBLE,
-                            (col_in_group + 1) % s,
-                            MPI_ANY_TAG,
-                            row_comm,
-                            MPI_STATUS_IGNORE
-                        );
-                    }
-                }
-            }
-
-            MPI_Comm row_col_comm; // ten sam row i col
-            MPI_Comm_split(active, row * Pn + col, slice, &row_col_comm);
-
-            std::vector<double> R(ceil_m * ceil_n, 0);
-
-            MPI_Reduce(&C[0], &R[0], ceil_n * ceil_m, MPI_DOUBLE, MPI_SUM, 0,
-                    row_col_comm);
-
-            // if (slice == 0 && row == 0 && col == 0) {
-            //     for (int i = 0; i < ceil_m; i++) {
-            //         for (int j = 0; j < ceil_n; j++) {
-            //             std::cout << C[i * ceil_n + j] << " ";
-            //         }
-            //         std::cout << "\n";
-            //     }
-            // }
-
-            if (slice == 0) {
-                int next_row = 0;
-                int print = 0;
-
-                if (col == 0) {
-                    if (row == 0) {
-                       std::cout << "zaczynam\n";
-                       std::cout.flush();
-                    }
-                    else {
-                        MPI_Recv(
-                            &print,
-                            1,
-                            MPI_INTEGER,
-                            row - 1,
-                            MPI_ANY_TAG, /* if not MPI_ANY_TAG, receive only with a certain tag */
-                            col_comm, /* communicator to use */
-                            MPI_STATUS_IGNORE /* if not MPI_STATUS_IGNORE, write comm info here */
-                        );
-                    }
-
-                    for (int i = 0; i < part_n; i++) {
-                        std::cout << R[next_row * ceil_n + i] << " ";
-                    }
-                    next_row++;
-                    if (col == Pn - 1) std::cout << "\n";
-
-                    if (col + 1 < Pn) {
-                        std::cout.flush();
-                        MPI_Send(
-                            &print,
-                            1,
-                            MPI_INTEGER,
-                            col + 1,
-                            0,
-                            row_comm
-                        );
-                    }
-                    else {
-                        // std::cout << "dupa\n";
-                        while (next_row < part_m) {
-                            for (int i = 0; i < part_n; i++) {
-                                std::cout << R[next_row * ceil_n + i] << " ";
-                            }
-                            next_row++;
-                            if (col == Pn - 1) std::cout << "\n";
-                        }
-                    }
-                }
-
-                while (next_row < part_m) {
-                    MPI_Recv(
-                        &print,
-                        1,
-                        MPI_INTEGER,
-                        col - 1 < 0 ? col - 1 + Pn : col - 1,
-                        MPI_ANY_TAG, /* if not MPI_ANY_TAG, receive only with a certain tag */
-                        row_comm, /* communicator to use */
-                        MPI_STATUS_IGNORE
-                    );
-
-                    for (int i = 0; i < part_n; i++) {
-                        std::cout << R[next_row * ceil_n + i] << " ";
-                    }
-                    next_row++;
-                    if (col == Pn - 1) std::cout << "\n";
-
-                    std::cout.flush();
+        if (slice == 0) {
+            if (rank != 0) {
+                for (int r = 0; r < part_m; r++) {
                     MPI_Send(
-                        &print,
-                        1,
-                        MPI_INTEGER,
-                        (col + 1) % Pn,
+                        &R[r * ceil_n],
+                        part_n,
+                        MPI_DOUBLE,
                         0,
-                        row_comm
+                        r,
+                        slice_comm
                     );
                 }
+            }
+            else {
+                for (int proc_row = 0; proc_row < Pm; proc_row++) {
+                    int num_rows = proc_row < m % Pm ? (m + Pm - 1) / Pm : m / Pm;
+                    for (int r = 0; r < num_rows; r++) {
+                        for (int proc_col = 0; proc_col < Pn; proc_col++) {
+                            int num_cols = proc_col < n % Pn ? (n + Pn -1) / Pn : n / Pn;
+                            if (proc_col == 0 && proc_row == 0) {
 
-                if (col == 0) {
-                    if (Pn > 1) {
-                        MPI_Recv(
-                            &print,
-                            1,
-                            MPI_INTEGER,
-                            col - 1 < 0 ? col - 1 + Pn : col - 1,
-                            MPI_ANY_TAG, /* if not MPI_ANY_TAG, receive only with a certain tag */
-                            row_comm, /* communicator to use */
-                            MPI_STATUS_IGNORE
-                        );
-                    }
-                    if (row + 1 < Pm) {
-                        std::cout.flush();
-                        MPI_Send(
-                            &print,
-                            1,
-                            MPI_INTEGER,
-                            row + 1,
-                            0,
-                            col_comm
-                        );
+                            }
+                            else {
+                                MPI_Recv(
+                                    &R[r * ceil_n],
+                                    num_cols,
+                                    MPI_DOUBLE,
+                                    proc_row * Pn + proc_col,
+                                    r,
+                                    slice_comm,
+                                    MPI_STATUS_IGNORE
+                                );
+                            }
+                            for (int i = 0; i < num_cols; i++) {
+                                std::cout << R[r * ceil_n + i] << " ";
+                            }
+                        }
+                        std::cout << "\n";
                     }
                 }
             }
-
         }
 
     }
