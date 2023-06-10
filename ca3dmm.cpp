@@ -314,93 +314,101 @@ int main(int argc, char *argv[]) {
 
         // Przesuwamy kolumny B
         if (col_in_group > 0) {
-            if (row_in_group == 0) {
-                MPI_Recv(
-                    &bufB[0],
-                    ceil_n * ceil_k,
-                    MPI_DOUBLE,
-                    (row_in_group + col_in_group) % s,
-                    MPI_ANY_TAG,
-                    col_comm,
-                    MPI_STATUS_IGNORE
-                );
-                MPI_Send(
-                    &B[0],
-                    ceil_n * ceil_k,
-                    MPI_DOUBLE,
-                    row_in_group - col_in_group < 0 ? row_in_group - col_in_group + s : row_in_group - col_in_group,
-                    0,
-                    col_comm
-                );
-                swap(bufB, B);
-            }
-            else {
-                MPI_Send(
-                    &B[0],
-                    ceil_n * ceil_k,
-                    MPI_DOUBLE,
-                    row_in_group - col_in_group < 0 ? row_in_group - col_in_group + s : row_in_group - col_in_group,
-                    0,
-                    col_comm
-                );
-                MPI_Recv(
-                    &B[0],
-                    ceil_n * ceil_k,
-                    MPI_DOUBLE,
-                    (row_in_group + col_in_group) % s,
-                    MPI_ANY_TAG,
-                    col_comm,
-                    MPI_STATUS_IGNORE
-                );
-            }
+            MPI_Request requests[2];
+            MPI_Status statuses[2];
+            MPI_Irecv(
+                &bufB[0],
+                ceil_n * ceil_k,
+                MPI_DOUBLE,
+                (row_in_group + col_in_group) % s,
+                MPI_ANY_TAG,
+                col_comm,
+                &requests[0]
+            );
+            MPI_Isend(
+                &B[0],
+                ceil_n * ceil_k,
+                MPI_DOUBLE,
+                row_in_group - col_in_group < 0 ? row_in_group - col_in_group + s : row_in_group - col_in_group,
+                0,
+                col_comm,
+                &requests[1]
+            );
+            MPI_Waitall(2, requests, statuses);
+            swap(bufB, B);
         }
 
         // Przesuwamy wiersze A
         if (row_in_group > 0) {
-            if (col_in_group == 0) {
-                MPI_Recv(
-                    &bufA[0],
-                    ceil_m * ceil_k,
-                    MPI_DOUBLE,
-                    (col_in_group + row_in_group) % s,
-                    MPI_ANY_TAG,
-                    row_comm,
-                    MPI_STATUS_IGNORE
-                );
-                MPI_Send(
-                    &A[0],
-                    ceil_m * ceil_k,
-                    MPI_DOUBLE,
-                    col_in_group - row_in_group < 0 ? col_in_group - row_in_group + s : col_in_group - row_in_group,
-                    0,
-                    row_comm
-                );
-                swap(bufA, A);
-            }
-            else {
-                MPI_Send(
-                    &A[0],
-                    ceil_m * ceil_k,
-                    MPI_DOUBLE,
-                    col_in_group - row_in_group < 0 ? col_in_group - row_in_group + s : col_in_group - row_in_group,
-                    0,
-                    row_comm
-                );
-                MPI_Recv(
-                    &A[0],
-                    ceil_m * ceil_k,
-                    MPI_DOUBLE,
-                    (col_in_group + row_in_group) % s,
-                    MPI_ANY_TAG,
-                    row_comm,
-                    MPI_STATUS_IGNORE
-                );
-            }
+            MPI_Request requests[2];
+            MPI_Status statuses[2];
+            MPI_Irecv(
+                &bufA[0],
+                ceil_m * ceil_k,
+                MPI_DOUBLE,
+                (col_in_group + row_in_group) % s,
+                MPI_ANY_TAG,
+                row_comm,
+                &requests[0]
+            );
+            MPI_Isend(
+                &A[0],
+                ceil_m * ceil_k,
+                MPI_DOUBLE,
+                col_in_group - row_in_group < 0 ? col_in_group - row_in_group + s : col_in_group - row_in_group,
+                0,
+                row_comm,
+                &requests[1]
+            );
+            MPI_Waitall(2, requests, statuses);
+            swap(bufA, A);
         }
 
         std::fill(C.begin(), C.end(), 0);
 
         for (int step = 0; step < s; step++) {
+
+            MPI_Request requests[4];
+            MPI_Status statuses[4];
+
+            if (step + 1 < s) {
+                MPI_Irecv(
+                    &bufB[0],
+                    ceil_n * ceil_k,
+                    MPI_DOUBLE,
+                    (row_in_group + 1) % s,
+                    MPI_ANY_TAG,
+                    col_comm,
+                    &requests[0]
+                );
+                MPI_Isend(
+                    &B[0],
+                    ceil_n * ceil_k,
+                    MPI_DOUBLE,
+                    row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
+                    0,
+                    col_comm,
+                    &requests[1]
+                );
+                MPI_Irecv(
+                    &bufA[0],
+                    ceil_m * ceil_k,
+                    MPI_DOUBLE,
+                    (col_in_group + 1) % s,
+                    MPI_ANY_TAG,
+                    row_comm,
+                    &requests[2]
+                );
+                MPI_Isend(
+                    &A[0],
+                    ceil_m * ceil_k,
+                    MPI_DOUBLE,
+                    col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
+                    0,
+                    row_comm,
+                    &requests[3]
+                );
+            }
 
             for (int i = 0; i < ceil_m; i++) {
                 for (int j = 0; j < ceil_n; j++) {
@@ -411,86 +419,9 @@ int main(int argc, char *argv[]) {
             }
 
             if (step + 1 < s) {
-                // Przesuwamy kolumny B
-                if (row_in_group == 0) {
-                    MPI_Recv(
-                        &bufB[0],
-                        ceil_n * ceil_k,
-                        MPI_DOUBLE,
-                        (row_in_group + 1) % s,
-                        MPI_ANY_TAG,
-                        col_comm,
-                        MPI_STATUS_IGNORE
-                    );
-                    MPI_Send(
-                        &B[0],
-                        ceil_n * ceil_k,
-                        MPI_DOUBLE,
-                        row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
-                        0,
-                        col_comm
-                    );
-                    swap(bufB, B);
-                }
-                else {
-                    MPI_Send(
-                        &B[0],
-                        ceil_n * ceil_k,
-                        MPI_DOUBLE,
-                        row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
-                        0,
-                        col_comm
-                    );
-                    MPI_Recv(
-                        &B[0],
-                        ceil_n * ceil_k,
-                        MPI_DOUBLE,
-                        (row_in_group + 1) % s,
-                        MPI_ANY_TAG,
-                        col_comm,
-                        MPI_STATUS_IGNORE
-                    );
-                }
-                // Przesuwamy wiersze A
-                if (col_in_group == 0) {
-                    MPI_Recv(
-                        &bufA[0],
-                        ceil_m * ceil_k,
-                        MPI_DOUBLE,
-                        (col_in_group + 1) % s,
-                        MPI_ANY_TAG,
-                        row_comm,
-                        MPI_STATUS_IGNORE
-                    );
-                    MPI_Send(
-                        &A[0],
-                        ceil_m * ceil_k,
-                        MPI_DOUBLE,
-                        col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
-                        0,
-                        row_comm
-                    );
-                    swap(bufA, A);
-                }
-                else {
-                    MPI_Send(
-                        &A[0],
-                        ceil_m * ceil_k,
-                        MPI_DOUBLE,
-                        col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
-                        0,
-                        row_comm
-                    );
-                    MPI_Recv(
-                        &A[0],
-                        ceil_m * ceil_k,
-                        MPI_DOUBLE,
-                        (col_in_group + 1) % s,
-                        MPI_ANY_TAG,
-                        row_comm,
-                        MPI_STATUS_IGNORE
-                    );
-                }
+                MPI_Waitall(4, requests, statuses);
+                swap(bufB, B);
+                swap(bufA, A);
             }
         }
 
