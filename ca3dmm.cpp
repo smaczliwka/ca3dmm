@@ -20,7 +20,7 @@ void opt_grid_dim(int P, int n, int m, int k, int& Pn, int& Pm, int& Pk) {
         for (int pm = pn; pm * pn <= P; pm += pn) {
             for (int pk = ceil((l * P) / (pm * pn)); pk * pm * pn <= P; pk++) {
                 long long target;
-                // Pm is multiplication of Pn
+                // Pm jest wielokrotnością Pn
                 target = (ll)(pm) * (ll)(k) * (ll)(n) + (ll)(pn) * (ll)(m) * (ll)(k) + (ll)(pk) * (ll)(m) * (ll)(n);
                 if (opt == -1 || target <= opt) {
                     opt = target;
@@ -28,7 +28,7 @@ void opt_grid_dim(int P, int n, int m, int k, int& Pn, int& Pm, int& Pk) {
                     Pm = pm;
                     Pk = pk;
                 }
-                // Pn is multiplication of Pm
+                // Pn jest wielokrotnością of Pm
                 target = (ll)(pn) * (ll)(k) * (ll)(n) + (ll)(pm) * (ll)(m) * (ll)(k) + (ll)(pk) * (ll)(m) * (ll)(n);
                 if (opt == -1 || target <= opt) {
                     opt = target;
@@ -178,8 +178,15 @@ int main(int argc, char *argv[]) {
     // if (rank == 0)
     //     std::cout << Pn << " " << Pm << " " << Pk << "\n";
 
-    MPI_Comm active;
-    MPI_Comm_split(MPI_COMM_WORLD, (rank < Pn * Pm * Pk ? 1 : 0), rank, &active);
+    MPI_Group world_group;
+    MPI_Comm_group(MPI_COMM_WORLD, &world_group);
+
+    int ranges[1][3] = {{0, Pn * Pm * Pk - 1, 1}};
+    MPI_Group active_group;
+    MPI_Group_range_incl(world_group, 1, ranges, &active_group);
+
+    MPI_Comm active_comm;
+    MPI_Comm_create_group(MPI_COMM_WORLD, active_group, 0, &active_comm);
 
     if (rank >= Pn * Pm * Pk) {
         MPI_Finalize();
@@ -193,7 +200,7 @@ int main(int argc, char *argv[]) {
     int dim_k = slice < k % Pk ? (k + Pk - 1) / Pk : k / Pk;
 
     MPI_Comm slice_comm;
-    MPI_Comm_split(active, slice, row * Pn + col, &slice_comm);
+    MPI_Comm_split(active_comm, slice, row * Pn + col, &slice_comm);
 
     int s = std::min(Pm, Pn);
 
@@ -221,16 +228,16 @@ int main(int argc, char *argv[]) {
     MPI_Comm_split(group_comm, row_in_group, col_in_group, &row_comm);
 
     MPI_Comm row_col_comm; // ten sam row i col
-    MPI_Comm_split(active, row * Pn + col, slice, &row_col_comm);
+    MPI_Comm_split(active_comm, row * Pn + col, slice, &row_col_comm);
 
     std::vector<double> A(ceil_m * ceil_k, 0);
     std::vector<double> B(ceil_n * ceil_k, 0);
 
-    std::vector<double> bufB(ceil_n * ceil_k, 0);
     std::vector<double> bufA(ceil_m * ceil_k, 0);
+    std::vector<double> bufB(ceil_n * ceil_k, 0);
 
     std::vector<double> C(ceil_n * ceil_m, 0);
-    std::vector<double> R(ceil_m * ceil_n, 0);
+    std::vector<double> R(ceil_n * ceil_m, 0);
 
     for (int mul = 0; mul < seedsA.size(); mul++) {
         sA = seedsA[mul];
@@ -244,9 +251,12 @@ int main(int argc, char *argv[]) {
                 int offset_m = row_in_group * (m / Pm) + std::min(row_in_group, m % Pm);
                 int offset_k = slice * (k / Pk) + std::min(slice, k % Pk) + col_in_group * (dim_k / s) + std::min(col_in_group, dim_k % s);
 
-                for (int i = 0; i < part_m; i++) {
-                    for (int j = 0; j < part_k; j++) {
-                        A[i * ceil_k + j] = generate_double(sA, i + offset_m, j + offset_k);
+                for (int i = 0; i < ceil_m; i++) {
+                    for (int j = 0; j < ceil_k; j++) {
+                        if (i < part_m && j < part_k)
+                            A[i * ceil_k + j] = generate_double(sA, i + offset_m, j + offset_k);
+                        else
+                            A[i * ceil_k + j] = 0.0;
                     }
                 }
             }
@@ -265,9 +275,12 @@ int main(int argc, char *argv[]) {
             int offset_n = col * (n / Pn) + std::min(col, n % Pn);
             int offset_k = slice * (k / Pk) + std::min(slice, k % Pk) + row * (dim_k / s) + std::min(row, dim_k % s);
 
-            for (int i = 0; i < part_n; i++) {
-                for (int j = 0; j < part_k; j++) {
-                    B[i * ceil_k + j] = generate_double(sB, j + offset_k, i + offset_n);
+            for (int i = 0; i < ceil_n; i++) {
+                for (int j = 0; j < ceil_k; j++) {
+                    if (i < part_n && j < part_k)
+                        B[i * ceil_k + j] = generate_double(sB, j + offset_k, i + offset_n);
+                    else
+                        B[i * ceil_k + j] = 0.0;
                 }
             }
         }
@@ -281,9 +294,12 @@ int main(int argc, char *argv[]) {
                 int offset_n = col_in_group * (n / Pn) + std::min(col_in_group, n % Pn);
                 int offset_k = slice * (k / Pk) + std::min(slice, k % Pk) + row_in_group * (dim_k / s) + std::min(row_in_group, dim_k % s);
 
-                for (int i = 0; i < part_n; i++) {
-                    for (int j = 0; j < part_k; j++) {
-                        B[i * ceil_k + j] = generate_double(sB, j + offset_k, i + offset_n);
+                for (int i = 0; i < ceil_n; i++) {
+                    for (int j = 0; j < ceil_k; j++) {
+                        if (i < part_n && j < part_k)
+                            B[i * ceil_k + j] = generate_double(sB, j + offset_k, i + offset_n);
+                        else
+                            B[i * ceil_k + j] = 0.0;
                     }
                 }
             }
@@ -303,9 +319,12 @@ int main(int argc, char *argv[]) {
             int offset_m = row * (m / Pm) + std::min(row, m % Pm);
             int offset_k = slice * (k / Pk) + std::min(slice, k % Pk) + col * (dim_k / s) + std::min(col, dim_k % s);
 
-            for (int i = 0; i < part_m; i++) {
-                for (int j = 0; j < part_k; j++) {
-                    A[i * ceil_k + j] = generate_double(sA, i + offset_m, j + offset_k);
+            for (int i = 0; i < ceil_m; i++) {
+                for (int j = 0; j < ceil_k; j++) {
+                    if (i < part_m && j < part_k)
+                        A[i * ceil_k + j] = generate_double(sA, i + offset_m, j + offset_k);
+                    else
+                        A[i * ceil_k + j] = 0.0;
                 }
             }
         }
@@ -371,44 +390,42 @@ int main(int argc, char *argv[]) {
             MPI_Request requests[4];
             MPI_Status statuses[4];
 
-            if (step + 1 < s) {
-                MPI_Irecv(
-                    &bufB[0],
-                    ceil_n * ceil_k,
-                    MPI_DOUBLE,
-                    (row_in_group + 1) % s,
-                    MPI_ANY_TAG,
-                    col_comm,
-                    &requests[0]
-                );
-                MPI_Isend(
-                    &B[0],
-                    ceil_n * ceil_k,
-                    MPI_DOUBLE,
-                    row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
-                    0,
-                    col_comm,
-                    &requests[1]
-                );
-                MPI_Irecv(
-                    &bufA[0],
-                    ceil_m * ceil_k,
-                    MPI_DOUBLE,
-                    (col_in_group + 1) % s,
-                    MPI_ANY_TAG,
-                    row_comm,
-                    &requests[2]
-                );
-                MPI_Isend(
-                    &A[0],
-                    ceil_m * ceil_k,
-                    MPI_DOUBLE,
-                    col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
-                    0,
-                    row_comm,
-                    &requests[3]
-                );
-            }
+            MPI_Irecv(
+                &bufB[0],
+                ceil_n * ceil_k,
+                MPI_DOUBLE,
+                (row_in_group + 1) % s,
+                MPI_ANY_TAG,
+                col_comm,
+                &requests[0]
+            );
+            MPI_Isend(
+                &B[0],
+                ceil_n * ceil_k,
+                MPI_DOUBLE,
+                row_in_group - 1 < 0 ? row_in_group - 1 + s : row_in_group - 1,
+                0,
+                col_comm,
+                &requests[1]
+            );
+            MPI_Irecv(
+                &bufA[0],
+                ceil_m * ceil_k,
+                MPI_DOUBLE,
+                (col_in_group + 1) % s,
+                MPI_ANY_TAG,
+                row_comm,
+                &requests[2]
+            );
+            MPI_Isend(
+                &A[0],
+                ceil_m * ceil_k,
+                MPI_DOUBLE,
+                col_in_group - 1 < 0 ? col_in_group - 1 + s : col_in_group - 1,
+                0,
+                row_comm,
+                &requests[3]
+            );
 
             for (int i = 0; i < ceil_m; i++) {
                 for (int j = 0; j < ceil_n; j++) {
@@ -418,11 +435,9 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            if (step + 1 < s) {
-                MPI_Waitall(4, requests, statuses);
-                swap(bufB, B);
-                swap(bufA, A);
-            }
+            MPI_Waitall(4, requests, statuses);
+            swap(bufB, B);
+            swap(bufA, A);
         }
 
         if (vprint == true) {
