@@ -1,14 +1,10 @@
 #include <iostream>
-#include <unistd.h>
-#include <stdlib.h>
-#include <time.h>
 #include <mpi.h>
 #include <cmath>
 #include <cstring>
 #include <densematgen.h>
 #include <vector>
-
-#include <bits/stdc++.h>
+#include <sstream>
 
 #define ll long long
 
@@ -227,7 +223,7 @@ int main(int argc, char *argv[]) {
     MPI_Comm row_comm;
     MPI_Comm_split(group_comm, row_in_group, col_in_group, &row_comm);
 
-    MPI_Comm row_col_comm; // ten sam row i col
+    MPI_Comm row_col_comm; // Ten sam wiersz i kolumna
     MPI_Comm_split(active_comm, row * Pn + col, slice, &row_col_comm);
 
     std::vector<double> A(ceil_m * ceil_k, 0);
@@ -261,12 +257,11 @@ int main(int argc, char *argv[]) {
                 }
             }
             MPI_Bcast(
-                &A[0],  /* the message will be written here */
-                        /* if my_rank==root, the message will be read from here */
-                ceil_m * ceil_k,  /* number of items in the message */
-                MPI_DOUBLE, /* type of data in the message */
-                0,   /* if my_rank==root, I'm sending, otherwise I'm receiving */
-                equi_comm  /* communicator to use */
+                &A[0],
+                ceil_m * ceil_k,
+                MPI_DOUBLE,
+                0,
+                equi_comm
             );
 
             // Każdy proces generuje swój kawałeczek macierzy Bi
@@ -288,7 +283,6 @@ int main(int argc, char *argv[]) {
         else { // col == col_in_group
             // Pierwsza grupa generuje całą macierz Bi i rozsyła swoim odpowiednikom
             if (group == 0) {
-                // int part_n = col_in_group < n % s ? (n + s - 1) / s : n / s;
                 int part_k = row_in_group < dim_k % s ? (dim_k + s - 1) / s : dim_k / s;
 
                 int offset_n = col_in_group * (n / Pn) + std::min(col_in_group, n % Pn);
@@ -304,14 +298,12 @@ int main(int argc, char *argv[]) {
                 }
             }
             MPI_Bcast(
-                &B[0],  /* the message will be written here */
-                        /* if my_rank==root, the message will be read from here */
-                ceil_n * ceil_k,  /* number of items in the message */
-                MPI_DOUBLE, /* type of data in the message */
-                0,   /* if my_rank==root, I'm sending, otherwise I'm receiving */
-                equi_comm  /* communicator to use */
+                &B[0],
+                ceil_n * ceil_k,
+                MPI_DOUBLE,
+                0,
+                equi_comm
             );
-
 
             // Każdy proces generuje swój kawałeczek macierzy Ai
             int part_k = col < dim_k % Pn ? (dim_k + Pn - 1) / Pn : dim_k / Pn;
